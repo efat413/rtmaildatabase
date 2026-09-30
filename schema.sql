@@ -1,9 +1,9 @@
 -- ==============================================================
 -- Cloudflare D1 Database Schema for Rongdhonu Trade E-Commerce
--- Database: rongdhonu-db (ID: 3276795d-5593-42c0-8e14-947f3ab1172b)
+-- Database: rongdhonutrade (ID: c9d62750-8fa0-4aab-b771-dd68068a24f2)
 --
 -- Apply to Cloudflare D1 with:
---   npx wrangler d1 execute rongdhonu-db --remote --file=./schema.sql
+--   npx wrangler d1 execute rongdhonutrade --remote --file=./schema.sql
 -- ==============================================================
 
 -- 1. PRODUCTS TABLE

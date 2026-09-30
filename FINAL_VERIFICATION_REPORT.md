@@ -274,7 +274,7 @@ The following operational checks cannot be completed locally and require executi
 | Scope | Live Verification Requirement | Expected Verification Action |
 |---|---|---|
 | **Production Deployment** | Cloudflare Workers runtime deployment. | Run `wrangler deploy` and verify worker bundles without execution error. |
-| **Remote D1 Schema** | Remote database migration application. | Run `wrangler d1 migrations apply rongdhonu-db --remote` for migrations `0001` through `0010`. |
+| **Remote D1 Schema** | Remote database migration application. | Run `wrangler d1 migrations apply rongdhonutrade --remote` for migrations `0001` through `0013`. |
 | **Edge Cache Behavior** | Real-world Cloudflare edge caching. | Inspect `CF-Cache-Status` headers (`HIT`/`MISS`/`STALE`) for `/api/store/homepage` across Dhaka, Singapore, and regional edge nodes. |
 | **Production Secrets** | Cloudflare Workers secret bindings. | Verify `ADMIN_SECRET`, `JWT_SECRET`, `STEADFAST_*`, `RESEND_*`, and `SUPER_ADMIN_*` are configured via `wrangler secret put`. |
 | **Live Courier Webhooks** | Real incoming Steadfast delivery status webhooks. | Transmit a live test webhook from Steadfast and verify HMAC-SHA256 signature validation in production logs. |

@@ -4,8 +4,8 @@ All necessary production files for your website and Cloudflare D1 integration ha
 
 ## 🗄️ Cloudflare Configuration
 - **Worker Name**: `rongdhonutrade` (matches Cloudflare Workers Builds CI)
-- **Database Name**: `rongdhonu-db`
-- **Database ID**: `3276795d-5593-42c0-8e14-947f3ab1172b`
+- **Database Name**: `rongdhonutrade`
+- **Database ID**: `c9d62750-8fa0-4aab-b771-dd68068a24f2`
 - **Binding Name**: `DB` (accessed via `env.DB`)
 
 All shared e-commerce data (Products, Categories, Orders, Stock, Sliders, and Store Settings) is managed directly through Cloudflare D1 as the single source of truth across all devices and browsers.
@@ -19,7 +19,7 @@ Run the official Cloudflare D1 migrations command to create all tables (`product
 
 ```bash
 # Apply migrations to the production Cloudflare D1 database:
-npx wrangler d1 migrations apply rongdhonu-db --remote
+npx wrangler d1 migrations apply rongdhonutrade --remote
 
 # Or run the npm script:
 npm run d1:migrate
@@ -32,7 +32,7 @@ npm run d1:migrate
 3. In Cloudflare Dashboard: **Workers & Pages > Overview > rt > Settings > Bindings**:
    - Ensure D1 Database binding is bound:
      - Variable name: `DB`
-     - D1 Database: `rongdhonu-db` (`3276795d-5593-42c0-8e14-947f3ab1172b`)
+     - D1 Database: `rongdhonutrade` (`c9d62750-8fa0-4aab-b771-dd68068a24f2`)
 
 #### Option B: Deploy with Wrangler CLI
 ```bash
@@ -40,7 +40,7 @@ npm run d1:migrate
 npx wrangler login
 
 # 2. Apply migrations to production D1 database:
-npx wrangler d1 migrations apply rongdhonu-db --remote
+npx wrangler d1 migrations apply rongdhonutrade --remote
 
 # 3. Build & Deploy Worker:
 npm run deploy
@@ -49,10 +49,10 @@ npm run deploy
 ---
 
 ## 🔍 Troubleshooting: Error 10181 ("database not found")
-If Cloudflare reports `D1 binding 'DB' references database '3276795d-5593-42c0-8e14-947f3ab1172b' which was not found [code: 10181]`:
-1. **Account Isolation**: Cloudflare D1 databases are account-scoped. If you have more than one Cloudflare account (e.g. personal vs company, or multiple email logins), the D1 database `3276795d-5593-42c0-8e14-947f3ab1172b` was created in Account A, but the Worker `rt` / CI Token is deploying to Account B.
+If Cloudflare reports `D1 binding 'DB' references database 'c9d62750-8fa0-4aab-b771-dd68068a24f2' which was not found [code: 10181]`:
+1. **Account Isolation**: Cloudflare D1 databases are account-scoped. If you have more than one Cloudflare account (e.g. personal vs company, or multiple email logins), the D1 database `c9d62750-8fa0-4aab-b771-dd68068a24f2` was created in Account A, but the Worker `rt` / CI Token is deploying to Account B.
 2. **Resolution**:
-   - Run `npx wrangler d1 list` to verify which account ID owns `rongdhonu-db`.
+   - Run `npx wrangler d1 list` to verify which account ID owns `rongdhonutrade`.
    - Ensure the CI deployment API token (`CLOUDFLARE_API_TOKEN`) or Workers Builds project is created under that exact same Cloudflare account.
    - Alternatively, add `"account_id": "<YOUR_ACCOUNT_ID>"` in `wrangler.json` to lock the deployment to the correct account.
 

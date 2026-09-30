@@ -1,6 +1,6 @@
 -- ==============================================================
 -- Cloudflare D1 Migration 0003: Media Assets & Hardening
--- Target Database: rongdhonu-db (ID: 3276795d-5593-42c0-8e14-947f3ab1172b)
+-- Target Database: rongdhonutrade (ID: c9d62750-8fa0-4aab-b771-dd68068a24f2)
 --
 -- Adds dedicated media_assets table for uploaded logos, favicons,
 -- banners, and QR codes. Storing media in dedicated assets prevents
