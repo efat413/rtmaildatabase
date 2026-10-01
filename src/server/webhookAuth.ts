@@ -98,27 +98,57 @@ export async function verifyCourierWebhookAuth(
 ): Promise<WebhookAuthResult> {
   const { rawBody, headers } = input;
 
-  // 1. Gather all candidate secrets from server environment & settings
+  // 1. Gather all candidate secrets strictly from dedicated webhook environment variables & settings
+  // CRITICAL SECURITY ENFORCEMENT:
+  // ADMIN_SECRET is strictly dedicated to administrator authentication and session token signing.
+  // It must NEVER be accepted or considered as a candidate webhook secret under any circumstances.
+  const envAdminSecret = (
+    env?.ADMIN_SECRET ||
+    (typeof process !== 'undefined' && process.env?.ADMIN_SECRET ? process.env.ADMIN_SECRET : '') ||
+    ''
+  ).trim();
+
   const candidateSecrets = new Set<string>();
 
   const envWebhookSecret = (env?.COURIER_WEBHOOK_SECRET || process.env.COURIER_WEBHOOK_SECRET || '').trim();
-  if (envWebhookSecret) candidateSecrets.add(envWebhookSecret);
-
-  const envAdminSecret = (env?.ADMIN_SECRET || process.env.ADMIN_SECRET || '').trim();
-  if (envAdminSecret) candidateSecrets.add(envAdminSecret);
+  if (envWebhookSecret && (!envAdminSecret || !timingSafeEqualString(envWebhookSecret, envAdminSecret))) {
+    candidateSecrets.add(envWebhookSecret);
+  }
 
   const envSteadfastSecret = (env?.STEADFAST_SECRET_KEY || process.env.STEADFAST_SECRET_KEY || '').trim();
-  if (envSteadfastSecret) candidateSecrets.add(envSteadfastSecret);
+  if (envSteadfastSecret && (!envAdminSecret || !timingSafeEqualString(envSteadfastSecret, envAdminSecret))) {
+    candidateSecrets.add(envSteadfastSecret);
+  }
 
   const settingsSteadfastSecret = (settings?.steadfastSecretKey || '').trim();
-  if (settingsSteadfastSecret) candidateSecrets.add(settingsSteadfastSecret);
+  if (settingsSteadfastSecret && (!envAdminSecret || !timingSafeEqualString(settingsSteadfastSecret, envAdminSecret))) {
+    candidateSecrets.add(settingsSteadfastSecret);
+  }
+
+  const envSteadfastApiKey = (env?.STEADFAST_API_KEY || process.env.STEADFAST_API_KEY || '').trim();
+  if (envSteadfastApiKey && (!envAdminSecret || !timingSafeEqualString(envSteadfastApiKey, envAdminSecret))) {
+    candidateSecrets.add(envSteadfastApiKey);
+  }
+
+  const settingsSteadfastApiKey = (settings?.steadfastApiKey || '').trim();
+  if (settingsSteadfastApiKey && (!envAdminSecret || !timingSafeEqualString(settingsSteadfastApiKey, envAdminSecret))) {
+    candidateSecrets.add(settingsSteadfastApiKey);
+  }
 
   if (Array.isArray(settings?.courierWebhooks)) {
     for (const w of settings.courierWebhooks) {
       if (w.secret && typeof w.secret === 'string' && w.secret.trim()) {
-        candidateSecrets.add(w.secret.trim());
+        const secretStr = w.secret.trim();
+        if (!envAdminSecret || !timingSafeEqualString(secretStr, envAdminSecret)) {
+          candidateSecrets.add(secretStr);
+        }
       }
     }
+  }
+
+  // Double-check: Unconditionally purge ADMIN_SECRET if present in candidate set
+  if (envAdminSecret) {
+    candidateSecrets.delete(envAdminSecret);
   }
 
   // If no secrets are configured in environment or settings, reject all webhook requests securely
@@ -154,28 +184,103 @@ export async function verifyCourierWebhookAuth(
     }
   }
 
+  const incomingSecret = secretHeader || bearerSecret;
   const apiKeyHeader = getHeaderValue(headers, 'api-key') || getHeaderValue(headers, 'x-api-key');
+
+  // If no authentication credentials (signature or shared secret) are provided at all:
+  if (!sigHeader && !incomingSecret) {
+    return {
+      authenticated: false,
+      status: 401,
+      error: 'Unauthorized: Missing required courier webhook signature or secret header (X-Webhook-Signature, X-Steadfast-Signature, X-Webhook-Secret, or Secret-Key).',
+    };
+  }
+
+  // Parse body safely to identify test pings and embedded timestamps
+  let parsedBody: any = null;
+  try {
+    if (rawBody && typeof rawBody === 'string' && rawBody.trim()) {
+      parsedBody = JSON.parse(rawBody);
+    }
+  } catch {}
+
+  const isTestPing = Boolean(
+    parsedBody && (
+      parsedBody.ping === true ||
+      parsedBody.ping === 'true' ||
+      parsedBody.test === true ||
+      parsedBody.test === 'true' ||
+      parsedBody.is_test === true ||
+      parsedBody.action === 'test_ping' ||
+      parsedBody.action === 'test' ||
+      parsedBody.action === 'ping' ||
+      parsedBody.event === 'test.ping' ||
+      parsedBody.event === 'test' ||
+      parsedBody.event === 'ping' ||
+      parsedBody.event === 'test_ping' ||
+      parsedBody.event === 'courier.added' ||
+      parsedBody.event === 'courier.updated' ||
+      parsedBody.event === 'courier.dispatched' ||
+      parsedBody.notification_type === 'courier.added' ||
+      parsedBody.notification_type === 'courier.updated' ||
+      parsedBody.notification_type === 'courier.dispatched' ||
+      parsedBody.notification_type === 'test' ||
+      parsedBody.notification_type === 'ping' ||
+      parsedBody.notification_type === 'test_webhook' ||
+      parsedBody.type === 'ping' ||
+      parsedBody.type === 'test' ||
+      parsedBody.status === 'test' ||
+      Boolean(parsedBody.courier) ||
+      (!parsedBody.consignment_id && !parsedBody.invoice && !parsedBody.order_id && !parsedBody.tracking_code && !parsedBody.status)
+    )
+  );
 
   // 3. Replay Protection: Extract and Validate Timestamp
   const timestampHeader =
     getHeaderValue(headers, 'x-webhook-timestamp') ||
     getHeaderValue(headers, 'x-timestamp') ||
     getHeaderValue(headers, 'x-signature-timestamp') ||
-    getHeaderValue(headers, 'x-req-timestamp');
+    getHeaderValue(headers, 'x-req-timestamp') ||
+    getHeaderValue(headers, 'x-steadfast-timestamp') ||
+    getHeaderValue(headers, 'timestamp') ||
+    getHeaderValue(headers, 'date') ||
+    (parsedBody?.timestamp ? String(parsedBody.timestamp) : '') ||
+    (parsedBody?.provider_updated_at ? String(parsedBody.provider_updated_at) : '') ||
+    (parsedBody?.updated_at ? String(parsedBody.updated_at) : '') ||
+    (parsedBody?.created_at ? String(parsedBody.created_at) : '');
+
+  // Cryptographic HMAC signatures strictly require a timestamp header to prevent signature replay
+  if (sigHeader && !timestampHeader) {
+    return {
+      authenticated: false,
+      status: 400,
+      error: 'Missing required courier webhook timestamp header (X-Webhook-Timestamp).',
+    };
+  }
+
+  // Non-test static shared secret headers (X-Webhook-Secret / X-Courier-Secret) require a timestamp header for replay protection
+  if (secretHeader && !bearerSecret && !isTestPing && !timestampHeader) {
+    return {
+      authenticated: false,
+      status: 400,
+      error: 'Missing required courier webhook timestamp header (X-Webhook-Timestamp).',
+    };
+  }
 
   let validatedTimestampMs: number | null = null;
   if (timestampHeader) {
-    if (/^\d+$/.test(timestampHeader)) {
-      const num = parseInt(timestampHeader, 10);
+    const cleanTs = timestampHeader.trim();
+    if (/^\d{9,16}$/.test(cleanTs)) {
+      const num = parseInt(cleanTs, 10);
       validatedTimestampMs = num > 10000000000 ? num : num * 1000;
-    } else {
-      const parsed = Date.parse(timestampHeader);
-      if (!isNaN(parsed)) {
+    } else if (cleanTs.includes('T') || cleanTs.includes('-') || cleanTs.includes(' ') || cleanTs.includes(':') || cleanTs.includes(',')) {
+      const parsed = Date.parse(cleanTs);
+      if (!isNaN(parsed) && isFinite(parsed) && parsed > 0) {
         validatedTimestampMs = parsed;
       }
     }
 
-    if (validatedTimestampMs === null) {
+    if (validatedTimestampMs === null || isNaN(validatedTimestampMs) || !isFinite(validatedTimestampMs)) {
       return {
         authenticated: false,
         status: 400,
@@ -184,27 +289,23 @@ export async function verifyCourierWebhookAuth(
     }
 
     const now = Date.now();
-    const TOLERANCE_MS = 5 * 60 * 1000; // 5-minute tolerance
-    if (Math.abs(now - validatedTimestampMs) > TOLERANCE_MS) {
+    const TOLERANCE_MS = 5 * 60 * 1000; // 5-minute tolerance window
+    const timeDiff = validatedTimestampMs - now;
+
+    if (Math.abs(timeDiff) > TOLERANCE_MS) {
       return {
         authenticated: false,
         status: 401,
-        error: 'Webhook request timestamp is expired or outside the 5-minute tolerance window (replay protection).',
+        error:
+          timeDiff > 0
+            ? 'Webhook request timestamp is in the future outside the 5-minute tolerance window (replay protection).'
+            : 'Webhook request timestamp is expired or outside the 5-minute tolerance window (replay protection).',
       };
     }
   }
 
   // 4. Verify HMAC-SHA256 Signature if signature header is provided
   if (sigHeader) {
-    // For HMAC-signed webhooks, require a valid timestamp header
-    if (!timestampHeader) {
-      return {
-        authenticated: false,
-        status: 400,
-        error: 'Missing required courier webhook timestamp header.',
-      };
-    }
-
     let cleanSig = sigHeader.trim();
     if (cleanSig.toLowerCase().startsWith('sha256=')) {
       cleanSig = cleanSig.substring(7).trim();
@@ -220,23 +321,41 @@ export async function verifyCourierWebhookAuth(
       };
     }
 
+    // Defensive check: explicitly reject HMAC signatures generated with ADMIN_SECRET
+    if (envAdminSecret) {
+      const adminDot = await computeHmacSha256Hex(envAdminSecret, `${timestampHeader}.${rawBody}`);
+      const adminConcat = await computeHmacSha256Hex(envAdminSecret, `${timestampHeader}${rawBody}`);
+      const adminRaw = await computeHmacSha256Hex(envAdminSecret, rawBody);
+      if (
+        timingSafeEqualString(cleanSig.toLowerCase(), adminDot.toLowerCase()) ||
+        timingSafeEqualString(cleanSig.toLowerCase(), adminConcat.toLowerCase()) ||
+        timingSafeEqualString(cleanSig.toLowerCase(), adminRaw.toLowerCase())
+      ) {
+        return {
+          authenticated: false,
+          status: 401,
+          error: 'Invalid courier webhook signature: cryptographic verification failed.',
+        };
+      }
+    }
+
     for (const secret of candidateSecrets) {
       // Prefer signing/verifying HMAC(secret, timestamp + "." + rawBody) consistently
       const expectedWithDot = await computeHmacSha256Hex(secret, `${timestampHeader}.${rawBody}`);
       if (timingSafeEqualString(cleanSig.toLowerCase(), expectedWithDot.toLowerCase())) {
-        return { authenticated: true, status: 200, matchedSecretSource: 'timestamped_signature', timestampMs: validatedTimestampMs || undefined };
+        return { authenticated: true, status: 200, matchedSecretSource: 'timestamped_signature', timestampMs: validatedTimestampMs };
       }
 
       // Fallback 1: timestamp concatenated without dot
       const expectedConcat = await computeHmacSha256Hex(secret, `${timestampHeader}${rawBody}`);
       if (timingSafeEqualString(cleanSig.toLowerCase(), expectedConcat.toLowerCase())) {
-        return { authenticated: true, status: 200, matchedSecretSource: 'timestamped_signature', timestampMs: validatedTimestampMs || undefined };
+        return { authenticated: true, status: 200, matchedSecretSource: 'timestamped_signature', timestampMs: validatedTimestampMs };
       }
 
-      // Fallback 2: raw body only (if timestamp was verified within tolerance)
+      // Fallback 2: raw body only (timestamp was already verified within 5-minute tolerance)
       const expectedSig = await computeHmacSha256Hex(secret, rawBody);
       if (timingSafeEqualString(cleanSig.toLowerCase(), expectedSig.toLowerCase())) {
-        return { authenticated: true, status: 200, matchedSecretSource: 'signature', timestampMs: validatedTimestampMs || undefined };
+        return { authenticated: true, status: 200, matchedSecretSource: 'signature', timestampMs: validatedTimestampMs };
       }
     }
 
@@ -248,8 +367,16 @@ export async function verifyCourierWebhookAuth(
   }
 
   // 5. Verify Shared Secret Headers (X-Webhook-Secret, X-Courier-Secret, Secret-Key, Bearer)
-  const incomingSecret = secretHeader || bearerSecret;
   if (incomingSecret) {
+    // Explicit security boundary: ADMIN_SECRET must NEVER be accepted as a webhook secret
+    if (envAdminSecret && timingSafeEqualString(incomingSecret, envAdminSecret)) {
+      return {
+        authenticated: false,
+        status: 401,
+        error: 'Unauthorized: Invalid courier webhook secret.',
+      };
+    }
+
     // If Api-Key is also provided, check Steadfast API Key consistency
     const configuredApiKey = (env?.STEADFAST_API_KEY || process.env.STEADFAST_API_KEY || settings?.steadfastApiKey || '').trim();
     if (apiKeyHeader && configuredApiKey) {
@@ -264,7 +391,7 @@ export async function verifyCourierWebhookAuth(
 
     for (const secret of candidateSecrets) {
       if (timingSafeEqualString(incomingSecret, secret)) {
-        return { authenticated: true, status: 200, matchedSecretSource: 'secret_header', timestampMs: validatedTimestampMs || undefined };
+        return { authenticated: true, status: 200, matchedSecretSource: 'secret_header', timestampMs: validatedTimestampMs };
       }
     }
 

@@ -1,6 +1,6 @@
 -- ==============================================================
 -- Cloudflare D1 Migration 0011: Webhook Replay Deduplication Store
--- Target Database: rongdhonutrade (ID: c9d62750-8fa0-4aab-b771-dd68068a24f2)
+-- Target Database: rongdhonu-db
 --
 -- Safe & idempotent schema update:
 -- 1. Creates webhook_replays table for distributed edge replay protection

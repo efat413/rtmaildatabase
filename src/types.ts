@@ -80,8 +80,10 @@ export interface CourierApiConfig {
   id: string;
   name: string;
   code: string;
-  apiKey: string;
+  // Security note: API keys and secrets must NEVER be persisted to browser storage or returned in plaintext
+  apiKey?: string;
   secretKey?: string;
+  hasCredentials?: boolean;
   baseUrl?: string;
   trackingUrlPattern: string;
   isActive: boolean;
@@ -300,6 +302,7 @@ export interface StoreSettings {
   tiktokPixelId?: string;
   tiktokTestEventCode?: string;
   gtmId?: string;
+  googleAnalyticsId?: string;
   advancedMatchingEnabled?: boolean;
   trackingDebugMode?: boolean;
   // Authoritative Hero Slider Aspect Ratio & Fit
@@ -324,13 +327,15 @@ export interface PixelEventLog {
   id: string;
   timestamp: string;
   eventName: string;
-  platforms: ('meta' | 'tiktok' | 'gtm')[];
+  platforms: ('meta' | 'tiktok' | 'gtm' | 'ga')[];
   status: 'success' | 'queued' | 'skipped';
   hasUserData: boolean;
   userDataSummary?: string;
   value?: number;
   currency?: string;
   payload: Record<string, any>;
+  isDuplicate?: boolean;
+  source?: string;
 }
 
 export type {

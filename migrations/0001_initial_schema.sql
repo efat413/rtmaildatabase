@@ -1,6 +1,6 @@
 -- ==============================================================
 -- Cloudflare D1 Migration 0001: Initial Schema
--- Target Database: rongdhonutrade (ID: c9d62750-8fa0-4aab-b771-dd68068a24f2)
+-- Target Database: rongdhonu-db (ID: 3276795d-5593-42c0-8e14-947f3ab1172b)
 --
 -- Creates all core tables and performance indexes for Rongdhonu Trade:
 --   1. products

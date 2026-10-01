@@ -3,44 +3,11 @@ import { StoreProvider, useStore } from './context/StoreContext';
 import { Header } from './components/Header';
 import { HeroCarousel } from './components/HeroCarousel';
 import { ProductCard } from './components/ProductCard';
-import { CartDrawer } from './components/CartDrawer';
-import { WishlistDrawer } from './components/WishlistDrawer';
-import { QuickViewModal } from './components/QuickViewModal';
-import { ProductVideoModal } from './components/ProductVideoModal';
-import { OrderSuccessModal } from './components/OrderSuccessModal';
-import { AuthModal } from './components/AuthModal';
-import { UserAccountModal } from './components/UserAccountModal';
 import { ToastNotification } from './components/ToastNotification';
 import { Footer } from './components/Footer';
 import { CategoryProductCarousel } from './components/CategoryProductCarousel';
 import { FeaturedProductsCarousel } from './components/FeaturedProductsCarousel';
-import { CategoryListingView } from './components/CategoryListingView';
-import { ProductDetailView } from './components/ProductDetailView';
-
-// Code-splitting: Lazy-load admin application and reset-password page
-// Storefront visitors do NOT download heavy admin chunks during normal browsing
-const AdminPanel = React.lazy(() =>
-  import('./components/AdminPanel').then((m) => ({ default: m.AdminPanel }))
-);
-const ResetPasswordPage = React.lazy(() =>
-  import('./components/ResetPasswordPage').then((m) => ({ default: m.ResetPasswordPage }))
-);
-
-const AdminLoadingFallback: React.FC = () => (
-  <div className="min-h-screen bg-slate-900 text-slate-100 flex items-center justify-center p-4 selection:bg-rose-500 selection:text-white">
-    <div className="text-center space-y-4">
-      <div className="w-12 h-12 border-3 border-rose-500/20 border-t-rose-500 rounded-full animate-spin mx-auto" />
-      <div className="text-sm font-semibold tracking-wide text-slate-300">Loading Admin Dashboard...</div>
-      <div className="text-xs text-slate-500">Securing workspace session & permissions</div>
-    </div>
-  </div>
-);
-
-const PageLoadingFallback: React.FC = () => (
-  <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-    <div className="w-10 h-10 border-3 border-rose-500/20 border-t-rose-500 rounded-full animate-spin" />
-  </div>
-);
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { formatWhatsAppLink } from './utils/phone';
 import { DEFAULT_SITE_NAME } from './utils/seo';
 import {
@@ -59,6 +26,214 @@ import {
   Headphones,
   Gift,
 } from 'lucide-react';
+
+// Code-splitting: Lazy-load route pages
+// Storefront visitors do NOT download heavy admin, product detail, or category listing chunks during initial load
+const AdminPanel = React.lazy(() =>
+  import('./components/AdminPanel').then((m) => ({ default: m.AdminPanel }))
+);
+const ResetPasswordPage = React.lazy(() =>
+  import('./components/ResetPasswordPage').then((m) => ({ default: m.ResetPasswordPage }))
+);
+const ProductDetailView = React.lazy(() =>
+  import('./components/ProductDetailView').then((m) => ({ default: m.ProductDetailView }))
+);
+const CategoryListingView = React.lazy(() =>
+  import('./components/CategoryListingView').then((m) => ({ default: m.CategoryListingView }))
+);
+
+// Code-splitting: Lazy-load global modal and drawer components
+// Heavy modal/drawer chunks are loaded on demand only when opened by the user,
+// drastically reducing initial JavaScript bundle size and homepage parse time.
+const CartDrawer = React.lazy(() =>
+  import('./components/CartDrawer').then((m) => ({ default: m.CartDrawer }))
+);
+const WishlistDrawer = React.lazy(() =>
+  import('./components/WishlistDrawer').then((m) => ({ default: m.WishlistDrawer }))
+);
+const QuickViewModal = React.lazy(() =>
+  import('./components/QuickViewModal').then((m) => ({ default: m.QuickViewModal }))
+);
+const ProductVideoModal = React.lazy(() =>
+  import('./components/ProductVideoModal').then((m) => ({ default: m.ProductVideoModal }))
+);
+const OrderSuccessModal = React.lazy(() =>
+  import('./components/OrderSuccessModal').then((m) => ({ default: m.OrderSuccessModal }))
+);
+const AuthModal = React.lazy(() =>
+  import('./components/AuthModal').then((m) => ({ default: m.AuthModal }))
+);
+const UserAccountModal = React.lazy(() =>
+  import('./components/UserAccountModal').then((m) => ({ default: m.UserAccountModal }))
+);
+
+// Unified, on-demand global modal container with individual Suspense boundaries and ErrorBoundaries
+const GlobalModals: React.FC = () => {
+  const {
+    products,
+    isCartOpen,
+    isWishlistOpen,
+    isAuthModalOpen,
+    isUserAccountModalOpen,
+    setIsUserAccountModalOpen,
+    quickViewProduct,
+    setQuickViewProduct,
+    videoModalProduct,
+    setVideoModalProduct,
+    videoModalMode,
+    recentSuccessOrder,
+    setRecentSuccessOrder,
+  } = useStore();
+
+  return (
+    <>
+      {isCartOpen && (
+        <ErrorBoundary compact fallbackTitle="Cart Unavailable" fallbackMessage="Could not load cart drawer.">
+          <React.Suspense fallback={null}>
+            <CartDrawer />
+          </React.Suspense>
+        </ErrorBoundary>
+      )}
+      {isWishlistOpen && (
+        <ErrorBoundary compact fallbackTitle="Wishlist Unavailable" fallbackMessage="Could not load wishlist.">
+          <React.Suspense fallback={null}>
+            <WishlistDrawer />
+          </React.Suspense>
+        </ErrorBoundary>
+      )}
+      {isUserAccountModalOpen && (
+        <ErrorBoundary compact fallbackTitle="Account Unavailable" fallbackMessage="Could not load user account.">
+          <React.Suspense fallback={null}>
+            <UserAccountModal
+              isOpen={isUserAccountModalOpen}
+              onClose={() => setIsUserAccountModalOpen(false)}
+            />
+          </React.Suspense>
+        </ErrorBoundary>
+      )}
+      {quickViewProduct && (
+        <ErrorBoundary compact fallbackTitle="Preview Unavailable" fallbackMessage="Could not load product preview.">
+          <React.Suspense fallback={null}>
+            <QuickViewModal
+              product={quickViewProduct}
+              onClose={() => setQuickViewProduct(null)}
+            />
+          </React.Suspense>
+        </ErrorBoundary>
+      )}
+      {videoModalProduct && (
+        <ErrorBoundary compact fallbackTitle="Video Unavailable" fallbackMessage="Could not load video player.">
+          <React.Suspense fallback={null}>
+            <ProductVideoModal
+              isOpen={Boolean(videoModalProduct)}
+              onClose={() => setVideoModalProduct(null)}
+              product={
+                (videoModalProduct && products.find((p) => p.id === videoModalProduct.id)) ||
+                videoModalProduct
+              }
+              initialMode={videoModalMode}
+              onEnterFloatingMode={() => setQuickViewProduct(null)}
+            />
+          </React.Suspense>
+        </ErrorBoundary>
+      )}
+      {recentSuccessOrder && (
+        <ErrorBoundary compact fallbackTitle="Order Details Unavailable" fallbackMessage="Could not load order details.">
+          <React.Suspense fallback={null}>
+            <OrderSuccessModal
+              order={recentSuccessOrder}
+              onClose={() => setRecentSuccessOrder(null)}
+            />
+          </React.Suspense>
+        </ErrorBoundary>
+      )}
+      {isAuthModalOpen && (
+        <ErrorBoundary compact fallbackTitle="Auth Unavailable" fallbackMessage="Could not load login form.">
+          <React.Suspense fallback={null}>
+            <AuthModal />
+          </React.Suspense>
+        </ErrorBoundary>
+      )}
+    </>
+  );
+};
+
+const AdminLoadingFallback: React.FC = () => (
+  <div className="min-h-screen bg-slate-900 text-slate-100 flex items-center justify-center p-4 selection:bg-rose-500 selection:text-white">
+    <div className="text-center space-y-4">
+      <div className="w-12 h-12 border-3 border-rose-500/20 border-t-rose-500 rounded-full animate-spin mx-auto" />
+      <div className="text-sm font-semibold tracking-wide text-slate-300">Loading Admin Dashboard...</div>
+      <div className="text-xs text-slate-500">Securing workspace session & permissions</div>
+    </div>
+  </div>
+);
+
+const PageLoadingFallback: React.FC = () => (
+  <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+    <div className="w-10 h-10 border-3 border-rose-500/20 border-t-rose-500 rounded-full animate-spin" />
+  </div>
+);
+
+const ProductDetailLoadingFallback: React.FC = () => (
+  <div className="py-6 sm:py-10 space-y-8 animate-pulse">
+    <div className="flex items-center gap-2">
+      <div className="h-4 w-20 bg-slate-200 rounded-md" />
+      <span className="text-slate-300">/</span>
+      <div className="h-4 w-28 bg-slate-200 rounded-md" />
+      <span className="text-slate-300">/</span>
+      <div className="h-4 w-40 bg-slate-200 rounded-md" />
+    </div>
+
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-8 lg:gap-12">
+      <div className="space-y-4">
+        <div className="w-full aspect-square rounded-3xl bg-slate-200 shadow-xs" />
+        <div className="grid grid-cols-4 gap-3">
+          <div className="aspect-square rounded-2xl bg-slate-200" />
+          <div className="aspect-square rounded-2xl bg-slate-200" />
+          <div className="aspect-square rounded-2xl bg-slate-200" />
+          <div className="aspect-square rounded-2xl bg-slate-200" />
+        </div>
+      </div>
+
+      <div className="space-y-5">
+        <div className="space-y-2">
+          <div className="h-4 w-24 bg-rose-100 rounded-full" />
+          <div className="h-8 w-4/5 bg-slate-200 rounded-xl" />
+          <div className="h-4 w-1/3 bg-slate-200 rounded-md" />
+        </div>
+        <div className="h-10 w-44 bg-slate-200 rounded-xl" />
+        <div className="h-20 w-full bg-slate-200/80 rounded-2xl" />
+        <div className="space-y-3 pt-4 border-t border-slate-200">
+          <div className="h-12 w-full bg-slate-300 rounded-xl" />
+          <div className="h-12 w-full bg-rose-200 rounded-xl" />
+        </div>
+      </div>
+    </div>
+  </div>
+);
+
+const CategoryListingLoadingFallback: React.FC = () => (
+  <div className="py-6 space-y-6 animate-pulse">
+    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
+      <div className="space-y-2">
+        <div className="h-7 w-48 bg-slate-200 rounded-xl" />
+        <div className="h-4 w-32 bg-slate-200 rounded-md" />
+      </div>
+      <div className="h-9 w-40 bg-slate-200 rounded-xl" />
+    </div>
+    <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-5">
+      {Array.from({ length: 8 }).map((_, idx) => (
+        <div key={idx} className="bg-white rounded-2xl border border-slate-200 p-3 sm:p-4 space-y-3 shadow-xs">
+          <div className="w-full aspect-square rounded-xl bg-slate-100" />
+          <div className="h-3 w-16 bg-slate-100 rounded-full" />
+          <div className="h-4 w-4/5 bg-slate-100 rounded" />
+          <div className="h-4 w-24 bg-slate-100 rounded" />
+          <div className="h-8 w-full bg-slate-100 rounded-xl" />
+        </div>
+      ))}
+    </div>
+  </div>
+);
 
 const getCategoryIcon = (iconName?: string) => {
   switch (iconName?.toLowerCase()) {
@@ -83,21 +258,12 @@ const StoreContent: React.FC = () => {
     setSearchQuery,
     currentView,
     selectedProductId,
-    quickViewProduct,
-    setQuickViewProduct,
-    videoModalProduct,
-    setVideoModalProduct,
-    videoModalMode,
-    recentSuccessOrder,
-    setRecentSuccessOrder,
     settings,
     currentUser,
     isAdminLoggedIn,
     cartCount,
     cartSubtotal,
     setIsCartOpen,
-    isUserAccountModalOpen,
-    setIsUserAccountModalOpen,
     copyCategoryLink,
     isStoreInitializing,
     isStoreError,
@@ -145,16 +311,12 @@ const StoreContent: React.FC = () => {
   if (currentView === 'reset-password' || (typeof window !== 'undefined' && window.location.pathname === '/reset-password')) {
     return (
       <>
-        <React.Suspense fallback={<PageLoadingFallback />}>
-          <ResetPasswordPage />
-        </React.Suspense>
-        <CartDrawer />
-        <WishlistDrawer />
-        <UserAccountModal
-          isOpen={isUserAccountModalOpen}
-          onClose={() => setIsUserAccountModalOpen(false)}
-        />
-        <AuthModal />
+        <ErrorBoundary fallbackTitle="Password Reset Unavailable" fallbackMessage="Could not load the password reset form. Please try again.">
+          <React.Suspense fallback={<PageLoadingFallback />}>
+            <ResetPasswordPage />
+          </React.Suspense>
+        </ErrorBoundary>
+        <GlobalModals />
         <ToastNotification />
       </>
     );
@@ -163,14 +325,12 @@ const StoreContent: React.FC = () => {
   if (currentView === 'admin') {
     return (
       <>
-        <React.Suspense fallback={<AdminLoadingFallback />}>
-          <AdminPanel />
-        </React.Suspense>
-        <UserAccountModal
-          isOpen={isUserAccountModalOpen}
-          onClose={() => setIsUserAccountModalOpen(false)}
-        />
-        <AuthModal />
+        <ErrorBoundary fallbackTitle="Admin Panel Unavailable" fallbackMessage="Could not load the administrative dashboard. Please reload or try again.">
+          <React.Suspense fallback={<AdminLoadingFallback />}>
+            <AdminPanel />
+          </React.Suspense>
+        </ErrorBoundary>
+        <GlobalModals />
         <ToastNotification />
       </>
     );
@@ -192,35 +352,15 @@ const StoreContent: React.FC = () => {
         <div>
           <Header />
           <main className="max-w-7xl mx-auto px-4 sm:px-6">
-            <ProductDetailView productId={currentProductId} />
+            <ErrorBoundary fallbackTitle="Product Details Unavailable" fallbackMessage="Could not load this product. Please return to the homepage or try again.">
+              <React.Suspense fallback={<ProductDetailLoadingFallback />}>
+                <ProductDetailView productId={currentProductId} />
+              </React.Suspense>
+            </ErrorBoundary>
           </main>
         </div>
         <Footer />
-        <CartDrawer />
-        <WishlistDrawer />
-        <UserAccountModal
-          isOpen={isUserAccountModalOpen}
-          onClose={() => setIsUserAccountModalOpen(false)}
-        />
-        <QuickViewModal
-          product={quickViewProduct}
-          onClose={() => setQuickViewProduct(null)}
-        />
-        <ProductVideoModal
-          isOpen={Boolean(videoModalProduct)}
-          onClose={() => setVideoModalProduct(null)}
-          product={
-            (videoModalProduct && products.find((p) => p.id === videoModalProduct.id)) ||
-            videoModalProduct
-          }
-          initialMode={videoModalMode}
-          onEnterFloatingMode={() => setQuickViewProduct(null)}
-        />
-        <OrderSuccessModal
-          order={recentSuccessOrder}
-          onClose={() => setRecentSuccessOrder(null)}
-        />
-        <AuthModal />
+        <GlobalModals />
         <ToastNotification />
       </div>
     );
@@ -294,9 +434,7 @@ const StoreContent: React.FC = () => {
         </div>
 
         <Footer />
-        <CartDrawer />
-        <WishlistDrawer />
-        <AuthModal />
+        <GlobalModals />
         <ToastNotification />
       </div>
     );
@@ -331,9 +469,7 @@ const StoreContent: React.FC = () => {
         </div>
 
         <Footer />
-        <CartDrawer />
-        <WishlistDrawer />
-        <AuthModal />
+        <GlobalModals />
         <ToastNotification />
       </div>
     );
@@ -466,32 +602,39 @@ const StoreContent: React.FC = () => {
           {/* If viewing a specific category or searching, show separate CategoryListingView with server-side pagination */}
           {selectedCategory || searchQuery.trim() ? (
             <section id="products-feed-section">
-              <CategoryListingView
-                category={activeCategoryObj || null}
-                categories={categories}
-                searchQuery={searchQuery}
-                products={categoryListingProducts}
-                isLoading={isCategoryLoading}
-                totalProducts={categoryTotalProducts}
-                currentPage={categoryPage}
-                totalPages={categoryTotalPages}
-                limit={24}
-                sortBy={categorySortBy}
-                isFeaturedListing={selectedCategory === 'featured'}
-                onPageChange={(page) => setCategoryPage(page)}
-                onSortChange={(sort) => setCategorySortBy(sort)}
-                onCategoryChange={(catId) => setSelectedCategory(catId)}
-                onBackToHome={() => {
-                  setSelectedCategory(null);
-                  setSearchQuery('');
-                  if (window.location.pathname !== '/' || window.location.search) {
-                    window.history.pushState({}, '', '/');
-                  }
-                  window.scrollTo({ top: 0, behavior: 'smooth' });
-                }}
-                onShareCategory={copyCategoryLink}
-                siteName={settings?.siteName}
-              />
+              <ErrorBoundary
+                fallbackTitle="Category Unavailable"
+                fallbackMessage="Could not load product collection. Click dismiss or return home."
+              >
+                <React.Suspense fallback={<CategoryListingLoadingFallback />}>
+                  <CategoryListingView
+                    category={activeCategoryObj || null}
+                    categories={categories}
+                    searchQuery={searchQuery}
+                    products={categoryListingProducts}
+                    isLoading={isCategoryLoading}
+                    totalProducts={categoryTotalProducts}
+                    currentPage={categoryPage}
+                    totalPages={categoryTotalPages}
+                    limit={24}
+                    sortBy={categorySortBy}
+                    isFeaturedListing={selectedCategory === 'featured'}
+                    onPageChange={(page) => setCategoryPage(page)}
+                    onSortChange={(sort) => setCategorySortBy(sort)}
+                    onCategoryChange={(catId) => setSelectedCategory(catId)}
+                    onBackToHome={() => {
+                      setSelectedCategory(null);
+                      setSearchQuery('');
+                      if (window.location.pathname !== '/' || window.location.search) {
+                        window.history.pushState({}, '', '/');
+                      }
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }}
+                    onShareCategory={copyCategoryLink}
+                    siteName={settings?.siteName}
+                  />
+                </React.Suspense>
+              </ErrorBoundary>
             </section>
           ) : (
             /* Homepage: Lightweight category sections with recycling carousels */
@@ -580,31 +723,7 @@ const StoreContent: React.FC = () => {
       <Footer />
 
       {/* Interactive Global Modals & Drawers */}
-      <CartDrawer />
-      <WishlistDrawer />
-      <UserAccountModal
-        isOpen={isUserAccountModalOpen}
-        onClose={() => setIsUserAccountModalOpen(false)}
-      />
-      <QuickViewModal
-        product={quickViewProduct}
-        onClose={() => setQuickViewProduct(null)}
-      />
-      <ProductVideoModal
-        isOpen={Boolean(videoModalProduct)}
-        onClose={() => setVideoModalProduct(null)}
-        product={
-          (videoModalProduct && products.find((p) => p.id === videoModalProduct.id)) ||
-          videoModalProduct
-        }
-        initialMode={videoModalMode}
-        onEnterFloatingMode={() => setQuickViewProduct(null)}
-      />
-      <OrderSuccessModal
-        order={recentSuccessOrder}
-        onClose={() => setRecentSuccessOrder(null)}
-      />
-      <AuthModal />
+      <GlobalModals />
       <ToastNotification />
     </div>
   );
@@ -612,8 +731,10 @@ const StoreContent: React.FC = () => {
 
 export default function App() {
   return (
-    <StoreProvider>
-      <StoreContent />
-    </StoreProvider>
+    <ErrorBoundary>
+      <StoreProvider>
+        <StoreContent />
+      </StoreProvider>
+    </ErrorBoundary>
   );
 }

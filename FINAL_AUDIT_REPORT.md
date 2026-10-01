@@ -164,7 +164,7 @@ The following checks **CANNOT** be completed in the local sandbox and **MUST** b
 | Area | Verification Task | Status | Requirement |
 |---|---|---|---|
 | **Production Cloudflare Deployment** | Execute `wrangler deploy` and verify worker builds and deploys without runtime error. | **NEEDS LIVE VERIFICATION** | Cloudflare account & API token required. |
-| **Production D1 Schema Migration** | Execute `wrangler d1 migrations apply rongdhonutrade --remote` to apply migrations `0001` through `0013`. | **NEEDS LIVE VERIFICATION** | Cloudflare D1 production database access required. |
+| **Production D1 Schema Migration** | Execute `wrangler d1 migrations apply rongdhonu-db --remote` to apply migrations `0001` through `0010`. | **NEEDS LIVE VERIFICATION** | Cloudflare D1 production database access required. |
 | **Cloudflare Edge Cache Status** | Inspect `CF-Cache-Status` response header on `/api/store/homepage` (verify `HIT`, `MISS`, `STALE` behavior across edge PoPs). | **NEEDS LIVE VERIFICATION** | Production URL required. |
 | **Production Secrets Configuration** | Confirm all production secrets (`ADMIN_SECRET`, `JWT_SECRET`, `STEADFAST_API_KEY`, `STEADFAST_SECRET_KEY`, `COURIER_WEBHOOK_SECRET`, `RESEND_API_KEY`, `SUPER_ADMIN_EMAILS`, `SUPER_ADMIN_USER_IDS`) are set via `wrangler secret put`. | **NEEDS LIVE VERIFICATION** | Production Cloudflare dashboard / CLI required. |
 | **Live Steadfast Courier Webhooks** | Receive real test webhook from Steadfast and verify HMAC-SHA256 signature verification in production Worker. | **NEEDS LIVE VERIFICATION** | Active Steadfast merchant account required. |

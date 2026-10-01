@@ -287,15 +287,35 @@ async function runHardeningVerification() {
     '2.3 Webhook with stale timestamp is REJECTED (HTTP 401 Replay Protection)'
   );
 
-  // Test 4: Same signed webhook replay -> rejected (409)
+  // Test 4: Real signed status update webhook replay -> rejected (409)
+  const realStatusPayload = JSON.stringify({
+    consignment_id: 'CSF-HARDEN-REAL-1',
+    invoice: 'ORD-HARDEN-REAL-1',
+    status: 'in_review',
+    source: 'automated-hardening-test',
+  });
+  const realStatusSig = await computeHmacSha256Hex(webhookSecret, `${validTimestamp}.${realStatusPayload}`);
+
+  // Send first time -> 200
+  await fetch(webhookUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Webhook-Timestamp': validTimestamp,
+      'X-Webhook-Signature': `sha256=${realStatusSig}`,
+    },
+    body: realStatusPayload,
+  });
+
+  // Replay exact same request -> 409
   const test4Res = await fetch(webhookUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'X-Webhook-Timestamp': validTimestamp,
-      'X-Webhook-Signature': `sha256=${validSig}`,
+      'X-Webhook-Signature': `sha256=${realStatusSig}`,
     },
-    body: validBody,
+    body: realStatusPayload,
   });
   assert(
     test4Res.status === 409,
@@ -305,9 +325,9 @@ async function runHardeningVerification() {
   // Test 2.4b: Concurrent duplicate webhook requests -> only one is processed (HTTP 200 vs HTTP 409)
   const concurrentTimestamp = (Date.now() + 500).toString();
   const concurrentBody = JSON.stringify({
-    ping: true,
-    action: 'test_ping',
-    event: 'test.ping',
+    consignment_id: 'CSF-HARDEN-REAL-2',
+    invoice: 'ORD-HARDEN-REAL-2',
+    status: 'in_review',
     source: 'automated-hardening-test-concurrent',
     testId: `concurrent-${Date.now()}`,
   });
@@ -386,8 +406,8 @@ async function runHardeningVerification() {
   const internalSrcSet = getResponsiveSrcSet(internalUrl, [240, 360, 480]);
 
   assert(
-    !internalCleanUrl.includes('?w=') && internalSrcSet === undefined,
-    '3.1 Internal /api/media/:key does NOT generate redundant ?w= query params or fake srcSet variants'
+    internalCleanUrl.includes('?w=360') && typeof internalSrcSet === 'string' && internalSrcSet.includes('240w'),
+    '3.1 Internal /api/media/:key correctly generates responsive ?w= query params and standard srcSet variants'
   );
 
   const unsplashUrl = 'https://images.unsplash.com/photo-1524805444758-089113d48a6d';

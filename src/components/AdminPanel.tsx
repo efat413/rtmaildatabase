@@ -105,9 +105,11 @@ import { ConfirmModal } from './ConfirmModal';
 import { FormattedDescription } from './FormattedDescription';
 import { ImageUploadField } from './ImageUploadField';
 import { AdminSidebar } from './AdminSidebar';
-import { FeaturedProductsManagement } from './Admin/FeaturedProductsManagement';
 
 // Code-splitting: Lazy-load large admin-only feature tabs and modals
+const FeaturedProductsManagement = React.lazy(() =>
+  import('./Admin/FeaturedProductsManagement').then((m) => ({ default: m.FeaturedProductsManagement }))
+);
 const PermissionManagementModal = React.lazy(() =>
   import('./Admin/PermissionManagementModal').then((m) => ({ default: m.PermissionManagementModal }))
 );
@@ -140,8 +142,9 @@ import { uploadApi, profitAnalyticsApi } from '../services/storeApi';
 import { orderApi } from '../services/orderApi';
 import { formatWhatsAppLink, normalizeWhatsAppNumber } from '../utils/phone';
 import { copyToClipboardSafe } from '../utils/clipboard';
+import { AdminProvider } from '../context/AdminProvider';
 
-export const AdminPanel: React.FC = () => {
+const AdminPanelContent: React.FC = () => {
   const {
     products,
     categories,
@@ -1438,7 +1441,7 @@ export const AdminPanel: React.FC = () => {
   // --- COURIER PARCEL BOOKING HANDLERS ---
   const openCourierBookingModal = (order: Order, preferredCourier?: string) => {
     setCourierModalOrder(order);
-    const activeCourier = courierConfigs.find((c) => c.isActive && (c.apiKey || (c.code.toLowerCase().includes('steadfast') && settings.steadfastApiKey)))?.code;
+    const activeCourier = courierConfigs.find((c) => c.isActive)?.code;
     const chosenCourier = preferredCourier || rowSelectedCouriers[order.id] || order.courierBooking?.provider || order.courierName || activeCourier || courierConfigs[0]?.code || 'Steadfast';
     setSelectedCourier(chosenCourier);
     setCourierBookingError(null);
@@ -1473,35 +1476,17 @@ export const AdminPanel: React.FC = () => {
 
     setCourierNote(order.customer.notes || `Order #${order.orderNumber} - Rongdhonu Trade`);
 
-    // Pre-populate credentials for chosen courier
-    const isSf = chosenCourier.toLowerCase().includes('steadfast');
-    const cfg = courierConfigs.find(
-      (c) => c.code.toLowerCase() === chosenCourier.toLowerCase() || c.name.toLowerCase() === chosenCourier.toLowerCase() || c.id === chosenCourier
-    );
-    if (isSf) {
-      setInlineSfApiKey(settings.steadfastApiKey || cfg?.apiKey || '');
-      setInlineSfSecretKey(settings.steadfastSecretKey || cfg?.secretKey || '');
-    } else {
-      setInlineSfApiKey(cfg?.apiKey || '');
-      setInlineSfSecretKey(cfg?.secretKey || '');
-    }
+    // Reset temporary validation keys on open
+    setInlineSfApiKey('');
+    setInlineSfSecretKey('');
     setCourierBookingError(null);
   };
 
   const handleModalCourierChange = (newCourier: string) => {
     setSelectedCourier(newCourier);
     setCourierBookingError(null);
-    const isSf = newCourier.toLowerCase().includes('steadfast');
-    const cfg = courierConfigs.find(
-      (c) => c.code.toLowerCase() === newCourier.toLowerCase() || c.name.toLowerCase() === newCourier.toLowerCase() || c.id === newCourier
-    );
-    if (isSf) {
-      setInlineSfApiKey(settings.steadfastApiKey || cfg?.apiKey || '');
-      setInlineSfSecretKey(settings.steadfastSecretKey || cfg?.secretKey || '');
-    } else {
-      setInlineSfApiKey(cfg?.apiKey || '');
-      setInlineSfSecretKey(cfg?.secretKey || '');
-    }
+    setInlineSfApiKey('');
+    setInlineSfSecretKey('');
   };
 
   const handleExecuteCourierBooking = async (e?: React.FormEvent) => {
@@ -1594,19 +1579,9 @@ export const AdminPanel: React.FC = () => {
       } as any);
 
       if (res.success) {
-        if (inlineSfApiKey.trim()) {
-          if (isSf) {
-            updateSettings({
-              steadfastApiKey: inlineSfApiKey.trim(),
-              steadfastSecretKey: inlineSfSecretKey.trim() || undefined,
-            }).catch(() => {});
-          } else if (chosenConfig?.id) {
-            updateCourierConfig(chosenConfig.id, {
-              apiKey: inlineSfApiKey.trim(),
-              secretKey: inlineSfSecretKey.trim() || undefined,
-            });
-          }
-        }
+        // Clear any temporary credentials from component state immediately
+        setInlineSfApiKey('');
+        setInlineSfSecretKey('');
         if (res.trackingCode) {
           const pattern = chosenConfig?.trackingUrlPattern || (isSf ? 'https://steadfast.com.bd/t/{trackingCode}' : 'https://steadfast.com.bd/t/{trackingCode}');
           const trackingUrl = pattern.includes('{trackingCode}') ? pattern.replace('{trackingCode}', res.trackingCode) : `${pattern}/${res.trackingCode}`;
@@ -1716,6 +1691,28 @@ export const AdminPanel: React.FC = () => {
     const subtotal = getEditOrderSubtotal(nextItems);
     const discount = editingOrder?.discountAmount || 0;
     setEditTotalAmount(Math.max(0, subtotal + editDeliveryFee - discount));
+  };
+
+  const handleUpdateOrderItemSize = (index: number, newSize: string) => {
+    const nextItems = editOrderItems.map((item, i) => {
+      if (i !== index) return item;
+      return {
+        ...item,
+        selectedSize: newSize.trim() || undefined,
+      };
+    });
+    setEditOrderItems(nextItems);
+  };
+
+  const handleUpdateOrderItemColor = (index: number, newColor: string) => {
+    const nextItems = editOrderItems.map((item, i) => {
+      if (i !== index) return item;
+      return {
+        ...item,
+        selectedColor: newColor.trim() || undefined,
+      };
+    });
+    setEditOrderItems(nextItems);
   };
 
   const handleRemoveOrderItem = (index: number) => {
@@ -3902,15 +3899,17 @@ export const AdminPanel: React.FC = () => {
             </div>
 
             {(productsSubView === 'featured' || productStockFilter === 'featured') ? (
-              <FeaturedProductsManagement
-                products={products}
-                categories={categories}
-                featuredProducts={featuredProducts}
-                onToggleFeatured={toggleProductFeatured}
-                hasPermission={hasPermission}
-                isSuperAdmin={isSuperAdmin}
-                onOpenEditModal={openEditProductModal}
-              />
+              <React.Suspense fallback={<AdminTabFallback />}>
+                <FeaturedProductsManagement
+                  products={products}
+                  categories={categories}
+                  featuredProducts={featuredProducts}
+                  onToggleFeatured={toggleProductFeatured}
+                  hasPermission={hasPermission}
+                  isSuperAdmin={isSuperAdmin}
+                  onOpenEditModal={openEditProductModal}
+                />
+              </React.Suspense>
             ) : (
               <>
 
@@ -5995,9 +5994,7 @@ export const AdminPanel: React.FC = () => {
                       <option value="">-- Choose Staff Account --</option>
                       {users
                         .filter(
-                          (u) =>
-                            (u.role === 'admin' || u.role === 'sub_admin') &&
-                            u.role !== 'super_admin'
+                          (u) => u.role === 'admin' || u.role === 'sub_admin'
                         )
                         .map((u) => (
                           <option key={u.id} value={u.id}>
@@ -6512,7 +6509,7 @@ export const AdminPanel: React.FC = () => {
                             <div className="flex items-center gap-1.5 min-w-0 overflow-hidden">
                               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider shrink-0">PW:</span>
                               <code className="font-mono text-xs font-bold text-slate-800 tracking-wider truncate">
-                                {isPwVisible ? (u.password || 'N/A') : '••••••••'}
+                                {isPwVisible ? ((u as any).password || 'N/A') : '••••••••'}
                               </code>
                             </div>
                             <button
@@ -6733,7 +6730,8 @@ export const AdminPanel: React.FC = () => {
                     (c) => c.code.toLowerCase() === selectedCourier.toLowerCase() || c.name.toLowerCase() === selectedCourier.toLowerCase() || c.id === selectedCourier
                   ) || courierConfigs[0];
                   const isConfigured = Boolean(
-                    (selectedCourier.toLowerCase().includes('steadfast') && (settings.steadfastApiKey || currentConfig?.apiKey)) ||
+                    (selectedCourier.toLowerCase().includes('steadfast') && Boolean(settings.steadfastApiKey || currentConfig?.hasCredentials)) ||
+                    currentConfig?.hasCredentials ||
                     currentConfig?.apiKey
                   );
                   return (
@@ -6773,8 +6771,8 @@ export const AdminPanel: React.FC = () => {
                   (c) => c.code.toLowerCase() === selectedCourier.toLowerCase() || c.name.toLowerCase() === selectedCourier.toLowerCase() || c.id === selectedCourier
                 );
                 const hasKey = isSf
-                  ? Boolean(settings.steadfastApiKey || inlineSfApiKey.trim() || currentConfig?.apiKey)
-                  : Boolean(currentConfig?.apiKey || inlineSfApiKey.trim());
+                  ? Boolean(settings.steadfastApiKey || inlineSfApiKey.trim() || currentConfig?.hasCredentials)
+                  : Boolean(currentConfig?.hasCredentials || currentConfig?.apiKey || inlineSfApiKey.trim());
                 const isMissing = !hasKey || (courierBookingError && courierBookingError.toLowerCase().includes('credential'));
                 if (!isMissing) return null;
 
@@ -9362,6 +9360,20 @@ export const AdminPanel: React.FC = () => {
                     const orderUnitPrice = Number(item.product?.price || 0);
                     const delta = orderUnitPrice - catalogPrice;
                     const itemTotal = orderUnitPrice * Number(item.quantity || 1);
+                    const availableSizes = Array.from(
+                      new Set([
+                        ...(publishedProd?.sizes || []),
+                        ...(item.product?.sizes || []),
+                        ...(item.selectedSize ? [item.selectedSize] : []),
+                      ].filter(Boolean) as string[])
+                    );
+                    const availableColors = Array.from(
+                      new Set([
+                        ...(publishedProd?.colors || []),
+                        ...(item.product?.colors || []),
+                        ...(item.selectedColor ? [item.selectedColor] : []),
+                      ].filter(Boolean) as string[])
+                    );
 
                     return (
                       <div
@@ -9408,6 +9420,123 @@ export const AdminPanel: React.FC = () => {
                               <Trash2 className="w-4 h-4" />
                             </button>
                           )}
+                        </div>
+
+                        {/* Variant Selection: Color & Size Controls */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2.5 pb-1 border-t border-slate-100">
+                          {/* Color Option Selector */}
+                          <div>
+                            <div className="flex items-center justify-between mb-1">
+                              <label
+                                htmlFor={`order-item-color-select-${idx}`}
+                                className="text-[10px] font-bold uppercase tracking-wider text-slate-600"
+                              >
+                                Product Color
+                              </label>
+                              {item.selectedColor && (
+                                <span className="text-[10px] font-semibold text-rose-600 flex items-center gap-1">
+                                  {(() => {
+                                    const parsed = parseColorOption(item.selectedColor);
+                                    return (
+                                      <>
+                                        <span
+                                          className={`w-2 h-2 rounded-full border shadow-2xs inline-block ${
+                                            parsed.isLight ? 'border-slate-300' : 'border-black/20'
+                                          }`}
+                                          style={{ backgroundColor: parsed.hex }}
+                                        />
+                                        <span className="truncate max-w-[100px]">{parsed.name}</span>
+                                      </>
+                                    );
+                                  })()}
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <select
+                                id={`order-item-color-select-${idx}`}
+                                value={item.selectedColor || ''}
+                                onChange={(e) => {
+                                  if (e.target.value === '__custom__') {
+                                    handleUpdateOrderItemColor(idx, item.selectedColor || 'Custom');
+                                  } else {
+                                    handleUpdateOrderItemColor(idx, e.target.value);
+                                  }
+                                }}
+                                className="flex-1 px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold text-slate-800 focus:ring-2 focus:ring-rose-500 focus:bg-white transition-all cursor-pointer"
+                              >
+                                <option value="">-- No Color / None --</option>
+                                {availableColors.map((col) => {
+                                  const parsed = parseColorOption(col);
+                                  return (
+                                    <option key={col} value={col}>
+                                      {parsed.name}
+                                    </option>
+                                  );
+                                })}
+                                <option value="__custom__">Custom / Other Color...</option>
+                              </select>
+                              {(!availableColors.includes(item.selectedColor || '') && Boolean(item.selectedColor)) && (
+                                <input
+                                  type="text"
+                                  value={item.selectedColor || ''}
+                                  onChange={(e) => handleUpdateOrderItemColor(idx, e.target.value)}
+                                  placeholder="Type color"
+                                  className="w-28 px-2 py-1.5 bg-white border border-rose-300 rounded-xl text-xs font-medium text-slate-800 focus:ring-2 focus:ring-rose-500"
+                                  title="Enter custom color name"
+                                />
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Size Option Selector */}
+                          <div>
+                            <div className="flex items-center justify-between mb-1">
+                              <label
+                                htmlFor={`order-item-size-select-${idx}`}
+                                className="text-[10px] font-bold uppercase tracking-wider text-slate-600"
+                              >
+                                Product Size / Option
+                              </label>
+                              {item.selectedSize && (
+                                <span className="text-[10px] font-extrabold text-slate-800 font-mono">
+                                  {item.selectedSize}
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <select
+                                id={`order-item-size-select-${idx}`}
+                                value={item.selectedSize || ''}
+                                onChange={(e) => {
+                                  if (e.target.value === '__custom__') {
+                                    handleUpdateOrderItemSize(idx, item.selectedSize || 'Custom');
+                                  } else {
+                                    handleUpdateOrderItemSize(idx, e.target.value);
+                                  }
+                                }}
+                                className="flex-1 px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold text-slate-800 focus:ring-2 focus:ring-rose-500 focus:bg-white transition-all cursor-pointer"
+                              >
+                                <option value="">-- No Size / None --</option>
+                                {availableSizes.map((sz) => (
+                                  <option key={sz} value={sz}>
+                                    {sz}
+                                  </option>
+                                ))}
+                                <option value="__custom__">Custom / Other Size...</option>
+                              </select>
+                              {(!availableSizes.includes(item.selectedSize || '') && Boolean(item.selectedSize)) && (
+                                <input
+                                  type="text"
+                                  value={item.selectedSize || ''}
+                                  onChange={(e) => handleUpdateOrderItemSize(idx, e.target.value)}
+                                  placeholder="Type size"
+                                  className="w-24 px-2 py-1.5 bg-white border border-rose-300 rounded-xl text-xs font-mono font-medium text-slate-800 focus:ring-2 focus:ring-rose-500"
+                                  title="Enter custom size"
+                                />
+                              )}
+                            </div>
+                          </div>
                         </div>
 
                         {/* Interactive Price Adjustment Row */}
@@ -10093,5 +10222,13 @@ export const AdminPanel: React.FC = () => {
         onConfirm={confirmDialog.onConfirm}
       />
     </div>
+  );
+};
+
+export const AdminPanel: React.FC = () => {
+  return (
+    <AdminProvider>
+      <AdminPanelContent />
+    </AdminProvider>
   );
 };

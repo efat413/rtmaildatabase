@@ -554,8 +554,12 @@ function localApiDevPlugin(): Plugin {
     }
     const safeAdminSettings = { ...settings };
     if (canViewCourierCredentials) {
-      safeAdminSettings.steadfastApiKey = settings.steadfastApiKey ? '••••••••' : '';
-      safeAdminSettings.steadfastSecretKey = settings.steadfastSecretKey ? '••••••••' : '';
+      const hasConfigured = Boolean(
+        process.env.STEADFAST_API_KEY ||
+        (settings.steadfastApiKey && settings.steadfastApiKey !== '')
+      );
+      safeAdminSettings.steadfastApiKey = hasConfigured ? '••••••••' : '';
+      safeAdminSettings.steadfastSecretKey = hasConfigured ? '••••••••' : '';
       if (Array.isArray(settings.courierWebhooks)) {
         safeAdminSettings.courierWebhooks = maskDevCourierWebhooks(settings.courierWebhooks);
       }
@@ -964,15 +968,20 @@ function localApiDevPlugin(): Plugin {
           });
         };
 
-        const readRawBody = (callback: (raw: string, body: any) => void) => {
+        const readRawBody = (callback: (raw: string, body: any, isMalformedJson?: boolean) => void) => {
           let raw = '';
           req.on('data', (chunk) => { raw += chunk; });
           req.on('end', () => {
             let parsed = {};
-            try {
-              parsed = JSON.parse(raw || '{}');
-            } catch {}
-            callback(raw, parsed);
+            let isMalformed = false;
+            if (raw && raw.trim()) {
+              try {
+                parsed = JSON.parse(raw);
+              } catch {
+                isMalformed = true;
+              }
+            }
+            callback(raw, parsed, isMalformed);
           });
         };
 
@@ -2087,13 +2096,9 @@ function localApiDevPlugin(): Plugin {
                   ? updates.topBarAnnouncementText
                   : (updates.announcementText !== undefined ? updates.announcementText : undefined);
 
-                // Preserve secret courier keys if masked asterisks are received
-                if (updates.steadfastApiKey === '••••••••' || updates.steadfastApiKey?.startsWith('****')) {
-                  updates.steadfastApiKey = devSettings.steadfastApiKey;
-                }
-                if (updates.steadfastSecretKey === '••••••••' || updates.steadfastSecretKey?.startsWith('****')) {
-                  updates.steadfastSecretKey = devSettings.steadfastSecretKey;
-                }
+                // Courier credentials must NEVER be persisted into store settings
+                delete updates.steadfastApiKey;
+                delete updates.steadfastSecretKey;
                 if (Array.isArray(updates.courierWebhooks)) {
                   const existingMap = new Map<string, string>();
                   for (const w of devCourierWebhooks) {
@@ -3312,14 +3317,59 @@ function localApiDevPlugin(): Plugin {
         }
 
         // Courier endpoints in dev
+        if (url.pathname === '/api/admin/courier/credentials/status' && method === 'GET') {
+          const authResult = requireDevAuth(req);
+          const permErr = requireDevPermission(authResult, 'courier.configure');
+          if (permErr) return sendDevError(res, permErr);
+
+          const hasWorkerApiKey = Boolean(process.env.STEADFAST_API_KEY && process.env.STEADFAST_API_KEY.trim().length > 0);
+          const hasWorkerSecretKey = Boolean(process.env.STEADFAST_SECRET_KEY && process.env.STEADFAST_SECRET_KEY.trim().length > 0);
+          const hasWorkerWebhookSecret = Boolean(process.env.COURIER_WEBHOOK_SECRET && process.env.COURIER_WEBHOOK_SECRET.trim().length > 0);
+          const hasLegacyApiKey = Boolean(devSettings.steadfastApiKey && devSettings.steadfastApiKey.trim().length > 0);
+          const hasLegacySecretKey = Boolean(devSettings.steadfastSecretKey && devSettings.steadfastSecretKey.trim().length > 0);
+
+          res.statusCode = 200;
+          return res.end(JSON.stringify({
+            success: true,
+            workerSecretsConfigured: {
+              apiKey: hasWorkerApiKey,
+              secretKey: hasWorkerSecretKey,
+              webhookSecret: hasWorkerWebhookSecret,
+            },
+            legacyD1Credentials: {
+              detected: hasLegacyApiKey || hasLegacySecretKey,
+              hasApiKey: hasLegacyApiKey,
+              hasSecretKey: hasLegacySecretKey,
+            },
+            migrationSafe: hasWorkerApiKey && hasWorkerSecretKey,
+            instructions: 'Configure Cloudflare Worker Secrets: npx wrangler secret put STEADFAST_API_KEY and npx wrangler secret put STEADFAST_SECRET_KEY. Then trigger cleanup via POST /api/admin/courier/cleanup-legacy-credentials.',
+          }));
+        }
+
+        if (url.pathname === '/api/admin/courier/cleanup-legacy-credentials' && method === 'POST') {
+          const authResult = requireDevAuth(req);
+          const permErr = requireDevPermission(authResult, 'settings.manage');
+          if (permErr) return sendDevError(res, permErr);
+
+          delete devSettings.steadfastApiKey;
+          delete devSettings.steadfastSecretKey;
+
+          res.statusCode = 200;
+          return res.end(JSON.stringify({
+            success: true,
+            cleaned: true,
+            message: 'Legacy courier credentials were safely removed from settings.',
+          }));
+        }
+
         if (url.pathname === '/api/courier/steadfast/test' && method === 'POST') {
           const authResult = requireDevAuth(req);
           const permErr = requireDevPermission(authResult, 'courier.configure');
           if (permErr) return sendDevError(res, permErr);
 
           return readBody(async (body) => {
-            const apiKey = (body?.apiKey || process.env.STEADFAST_API_KEY || devSettings.steadfastApiKey || '').trim();
-            const secretKey = (body?.secretKey || process.env.STEADFAST_SECRET_KEY || devSettings.steadfastSecretKey || '').trim();
+            const apiKey = (body?.apiKey || process.env.STEADFAST_API_KEY || '').trim();
+            const secretKey = (body?.secretKey || process.env.STEADFAST_SECRET_KEY || '').trim();
             const baseUrl = body?.baseUrl;
 
             if (apiKey && secretKey) {
@@ -3328,9 +3378,6 @@ function localApiDevPlugin(): Plugin {
                 const sfData = callResult.data || {};
 
                 if (callResult.ok && (sfData.status === 200 || sfData.current_balance !== undefined || sfData.balance !== undefined)) {
-                  if (body?.apiKey) devSettings.steadfastApiKey = body.apiKey;
-                  if (body?.secretKey) devSettings.steadfastSecretKey = body.secretKey;
-
                   res.statusCode = 200;
                   return res.end(JSON.stringify({
                     success: true,
@@ -3355,7 +3402,7 @@ function localApiDevPlugin(): Plugin {
             res.statusCode = 400;
             return res.end(JSON.stringify({
               success: false,
-              error: 'Steadfast Courier API credentials are not configured on the server. Please enter API Key and Secret Key.',
+              error: 'Steadfast Courier API credentials are not configured in Worker secrets or provided in request.',
             }));
           });
         }
@@ -3410,19 +3457,16 @@ function localApiDevPlugin(): Plugin {
             const recipientPhone = (parcelData.recipient_phone || order.customer?.phone || '').replace(/[^0-9]/g, '');
 
             if (isSteadfast) {
-              const apiKey = courierParam.apiKey || body?.apiKey || process.env.STEADFAST_API_KEY || devSettings.steadfastApiKey;
-              const secretKey = courierParam.secretKey || body?.secretKey || process.env.STEADFAST_SECRET_KEY || devSettings.steadfastSecretKey;
+              const apiKey = (process.env.STEADFAST_API_KEY || '').trim();
+              const secretKey = (process.env.STEADFAST_SECRET_KEY || '').trim();
 
               if (!apiKey || !secretKey) {
                 res.statusCode = 400;
                 return res.end(JSON.stringify({
                   success: false,
-                  error: 'Steadfast Courier API credentials are not configured. Please enter your Steadfast API Key and Secret Key in the Admin Panel (under Courier APIs or Store Settings), or set STEADFAST_API_KEY and STEADFAST_SECRET_KEY in Cloudflare Worker secrets.',
+                  error: 'Steadfast Courier API credentials are not configured in Worker secrets.',
                 }));
               }
-
-              if (body?.apiKey) devSettings.steadfastApiKey = body.apiKey;
-              if (body?.secretKey) devSettings.steadfastSecretKey = body.secretKey;
 
               try {
                 const sfPayload: Record<string, any> = {
@@ -3627,11 +3671,11 @@ function localApiDevPlugin(): Plugin {
             }
           }
 
-          const apiKey = process.env.STEADFAST_API_KEY || devSettings.steadfastApiKey;
-          const secretKey = process.env.STEADFAST_SECRET_KEY || devSettings.steadfastSecretKey;
+          const apiKey = (process.env.STEADFAST_API_KEY || '').trim();
+          const secretKey = (process.env.STEADFAST_SECRET_KEY || '').trim();
           if (!apiKey || !secretKey) {
             res.statusCode = 400;
-            return res.end(JSON.stringify({ success: false, error: 'Steadfast credentials not configured on server.' }));
+            return res.end(JSON.stringify({ success: false, error: 'Steadfast Courier API credentials are not configured in Worker secrets.' }));
           }
 
           try {
@@ -3732,7 +3776,15 @@ function localApiDevPlugin(): Plugin {
           }
 
           if (method === 'POST') {
-            return readRawBody(async (rawBody, body) => {
+            return readRawBody(async (rawBody, body, isMalformedJson) => {
+              if (isMalformedJson) {
+                res.statusCode = 400;
+                return res.end(JSON.stringify({
+                  success: false,
+                  error: 'Malformed JSON payload.',
+                }));
+              }
+
               // Webhook authentication check before parsing or modifying orders
               const authResult = await verifyCourierWebhookAuth(
                 {
@@ -3752,12 +3804,70 @@ function localApiDevPlugin(): Plugin {
                 }));
               }
 
-              // Webhook Replay Protection: Fingerprint deduplication
+              const nowIso = new Date().toISOString();
+
+              const sfData = body?.data && typeof body.data === 'object' ? body.data : body;
+              const consignmentId = sfData?.consignment_id || sfData?.consignmentId || sfData?.cid;
+              const invoice = sfData?.invoice || sfData?.order_id || sfData?.orderId || sfData?.orderNumber;
+              const trackingCode = sfData?.tracking_code || sfData?.trackingCode || sfData?.tracking;
+              const rawStatus = sfData?.status || sfData?.delivery_status || sfData?.status_name;
+
+              const eventType = String(body?.event || body?.notification_type || body?.type || body?.action || '').toLowerCase();
+              const isDummyConsignment = consignmentId === 0 || consignmentId === '0' || consignmentId === 'test' || String(invoice).toLowerCase() === 'test';
+
+              // Check if this is a test ping (Steadfast "Test Webhook", UI tester, or trigger verification)
+              const isExplicitTestPing =
+                body?.ping === true ||
+                body?.ping === 'true' ||
+                body?.test === true ||
+                body?.test === 'true' ||
+                body?.is_test === true ||
+                eventType === 'test_ping' ||
+                eventType === 'test.ping' ||
+                eventType === 'ping' ||
+                eventType === 'test' ||
+                eventType === 'test_webhook' ||
+                rawStatus === 'test' ||
+                rawStatus === 'test_ping' ||
+                Boolean(body?.courier);
+
+              // Steadfast trigger test pings (courier.added, courier.updated, courier.dispatched without a real order update)
+              const isSteadfastTriggerTest =
+                (eventType === 'courier.added' ||
+                 eventType === 'courier.updated' ||
+                 eventType === 'courier.dispatched' ||
+                 eventType === 'courier.deleted') &&
+                (!consignmentId || isDummyConsignment);
+
+              const isEmptyProbe = !consignmentId && !invoice && !trackingCode && !rawStatus;
+
+              const isTestWebhook = isExplicitTestPing || isSteadfastTriggerTest || isEmptyProbe;
+
+              if (isTestWebhook) {
+                res.statusCode = 200;
+                return res.end(JSON.stringify({
+                  success: true,
+                  status: 200,
+                  message: 'Webhook received',
+                  event: body?.event || body?.notification_type || body?.action || 'test_acknowledged',
+                  courier: body?.courier?.name || body?.courier?.code || 'steadfast',
+                  receivedAt: nowIso,
+                }));
+              }
+
+              // Webhook Replay Protection: Fingerprint deduplication strictly for real order delivery updates
               const timestampHeader = (
                 req.headers['x-webhook-timestamp'] ||
                 req.headers['x-timestamp'] ||
                 req.headers['x-signature-timestamp'] ||
                 req.headers['x-req-timestamp'] ||
+                req.headers['x-steadfast-timestamp'] ||
+                req.headers['timestamp'] ||
+                req.headers['date'] ||
+                sfData?.timestamp ||
+                sfData?.provider_updated_at ||
+                sfData?.updated_at ||
+                sfData?.created_at ||
                 ''
               ) as string;
 
@@ -3769,6 +3879,7 @@ function localApiDevPlugin(): Plugin {
                 req.headers['x-signature-sha256'] ||
                 req.headers['x-webhook-secret'] ||
                 req.headers['secret-key'] ||
+                String(req.headers['authorization'] || '').replace(/^Bearer\s+/i, '') ||
                 ''
               ) as string;
 
@@ -3781,35 +3892,6 @@ function localApiDevPlugin(): Plugin {
                   error: 'Webhook replay rejected: This webhook request has already been processed.',
                 }));
               }
-
-              const nowIso = new Date().toISOString();
-              const isPing =
-                body?.ping === true ||
-                body?.action === 'test_ping' ||
-                body?.event === 'test.ping' ||
-                body?.event === 'courier.added' ||
-                body?.event === 'courier.updated' ||
-                body?.event === 'courier.deleted' ||
-                body?.type === 'ping' ||
-                Boolean(body?.courier);
-
-              if (isPing) {
-                res.statusCode = 200;
-                return res.end(JSON.stringify({
-                  success: true,
-                  status: 200,
-                  message: 'Courier webhook verified and acknowledged successfully.',
-                  event: body?.event || 'test_acknowledged',
-                  courier: body?.courier?.name || body?.courier?.code || undefined,
-                  receivedAt: nowIso,
-                }));
-              }
-
-              const sfData = body?.data && typeof body.data === 'object' ? body.data : body;
-              const consignmentId = sfData?.consignment_id || sfData?.consignmentId || sfData?.cid;
-              const invoice = sfData?.invoice || sfData?.order_id || sfData?.orderId || sfData?.orderNumber;
-              const trackingCode = sfData?.tracking_code || sfData?.trackingCode || sfData?.tracking;
-              const rawStatus = sfData?.status || sfData?.delivery_status || sfData?.status_name;
 
               let matchedOrder = null;
               if (invoice) {
@@ -4040,7 +4122,7 @@ function localApiDevPlugin(): Plugin {
               'X-Webhook-Timestamp': new Date().toISOString(),
             };
             const serializedTestPayload = JSON.stringify(testPayload);
-            const effectiveTestSecret = secret || (process.env.COURIER_WEBHOOK_SECRET || process.env.STEADFAST_SECRET_KEY || devSettings.steadfastSecretKey || '').trim();
+            const effectiveTestSecret = secret || (process.env.COURIER_WEBHOOK_SECRET || process.env.STEADFAST_SECRET_KEY || '').trim();
             if (effectiveTestSecret) {
               headers['X-Webhook-Secret'] = effectiveTestSecret;
               const sig = await computeHmacSha256Hex(effectiveTestSecret, serializedTestPayload);
@@ -4175,7 +4257,7 @@ function localApiDevPlugin(): Plugin {
                   'X-Webhook-Timestamp': new Date().toISOString(),
                 };
                 const serializedPayload = JSON.stringify(payload);
-                const effectiveTriggerSecret = t.secret || (process.env.COURIER_WEBHOOK_SECRET || process.env.STEADFAST_SECRET_KEY || devSettings.steadfastSecretKey || '').trim();
+                const effectiveTriggerSecret = t.secret || (process.env.COURIER_WEBHOOK_SECRET || process.env.STEADFAST_SECRET_KEY || '').trim();
                 if (effectiveTriggerSecret) {
                   headers['X-Webhook-Secret'] = effectiveTriggerSecret;
                   const sig = await computeHmacSha256Hex(effectiveTriggerSecret, serializedPayload);
@@ -4553,6 +4635,29 @@ export default defineConfig(() => {
       allowedHosts: true as const,
       hmr: process.env.DISABLE_HMR !== 'true',
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
+    },
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (id.includes('node_modules/react/') || id.includes('node_modules/react-dom/')) {
+              return 'vendor-react';
+            }
+            if (id.includes('node_modules/lucide-react/')) {
+              return 'vendor-icons';
+            }
+            if (id.includes('pixelTracking')) {
+              return 'pixel-tracking';
+            }
+            if (id.includes('bangladeshAreas')) {
+              return 'bangladesh-areas';
+            }
+            if (id.includes('seedData')) {
+              return 'seed-data';
+            }
+          },
+        },
+      },
     },
   };
 });
